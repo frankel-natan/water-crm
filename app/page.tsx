@@ -1,69 +1,885 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+
+const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<'dispatcher' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts'>('dispatcher');
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
+  const [maintenanceList, setMaintenanceList] = useState<any[]>([]);
+  const [activeShift, setActiveShift] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  // סינון וחיפוש במוקד
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'completed'>('all');
+
+  // סטייט למודאל פתיחת קריאה
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('');
+  const [address, setAddress] = useState('');
+  const [description, setDescription] = useState('');
+  const [priority, setPriority] = useState('normal');
+
+  // סטייט נפרד לכל קריאה בשטח עבור בחירת חלק וכמות
+  const [ticketSelections, setTicketSelections] = useState<{ [key: number]: { itemId: string; qty: number } }>({});
+
+  async function loadAllData() {
+    setLoading(true);
+    try {
+      // 1. קריאות שירות כולל חלקים שנצרכו
+      const { data: ticketsData } = await supabase
+        .from('service_tickets')
+        .select(`
+          id, ticket_type, status, priority, description, scheduled_at,
+          customers (name, phone),
+          sites (city, address),
+          ticket_parts_used (
+            quantity_used,
+            inventory_items (name)
+          )
+        `)
+        .order('created_at', { ascending: false });
+      setTickets(ticketsData || []);
+
+      // 2. מלאי רכב טכנאי
+      const { data: invData } = await supabase
+        .from('technician_inventory')
+        .select(`
+          quantity,
+          inventory_items (id, sku, name, category, unit_price)
+        `)
+        .eq('technician_id', DEMO_TECH_ID);
+      setInventory(invData || []);
+
+      if (ticketsData && invData && invData.length > 0) {
+        const firstInv: any = invData[0];
+        const defaultItemId = Array.isArray(firstInv.inventory_items)
+          ? firstInv.inventory_items[0]?.id
+          : firstInv.inventory_items?.id;
+
+        const initialSelections: any = {};
+        ticketsData.forEach((t: any) => {
+          initialSelections[t.id] = { itemId: defaultItemId, qty: 1 };
+        });
+        setTicketSelections(initialSelections);
+      }
+
+      // 3. תחזוקה מונעת מתוך בסיס הנתונים
+      const { data: maintData } = await supabase
+        .from('maintenance_schedules')
+        .select('*')
+        .order('id', { ascending: true });
+      setMaintenanceList(maintData || []);
+
+      // 4. לקוחות ואתרים
+      const { data: custData } = await supabase
+        .from('customers')
+        .select(`
+          id, name, phone, customer_type,
+          sites (id, site_name, city, address),
+          service_tickets (id, status)
+        `)
+        .order('created_at', { ascending: false });
+      setCustomers(custData || []);
+
+      // 5. משמרות ונוכחות
+      const { data: shiftsData } = await supabase
+        .from('employee_shifts')
+        .select('*')
+        .eq('user_id', DEMO_TECH_ID)
+        .order('clock_in', { ascending: false })
+        .limit(10);
+      setShifts(shiftsData || []);
+
+      const currentOpenShift = (shiftsData || []).find((s: any) => !s.clock_out) || null;
+      setActiveShift(currentOpenShift);
+    } catch (err) {
+      console.error('Error loading data:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAllData();
+  }, []);
+
+  async function createTicketInDB(params: {
+    name: string;
+    phone: string;
+    city: string;
+    address: string;
+    priority: string;
+    description: string;
+    ticketType?: string;
+  }) {
+    const { data: custData, error: custError } = await supabase
+      .from('customers')
+      .insert([{ customer_type: 'business', name: params.name, phone: params.phone || '050-0000000' }])
+      .select()
+      .single();
+    if (custError) throw custError;
+
+    const { data: siteData, error: siteError } = await supabase
+      .from('sites')
+      .insert([{ customer_id: custData.id, site_name: 'אתר ראשי', city: params.city, address: params.address, region_id: 1 }])
+      .select()
+      .single();
+    if (siteError) throw siteError;
+
+    const { error: ticketError } = await supabase
+      .from('service_tickets')
+      .insert([{
+        customer_id: custData.id,
+        site_id: siteData.id,
+        technician_id: DEMO_TECH_ID,
+        ticket_type: params.ticketType || 'repair',
+        status: 'scheduled',
+        priority: params.priority,
+        description: params.description
+      }]);
+    if (ticketError) throw ticketError;
+  }
+
+  async function handleCreateTicket(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      await createTicketInDB({
+        name: customerName,
+        phone,
+        city,
+        address,
+        priority,
+        description: description || 'קריאת שירות חדשה'
+      });
+
+      setIsModalOpen(false);
+      setCustomerName('');
+      setPhone('');
+      setCity('');
+      setAddress('');
+      setDescription('');
+      loadAllData();
+    } catch (err: any) {
+      alert('שגיאה: ' + err.message);
+    }
+  }
+
+  // הפיכת התראת תחזוקה לקריאה פעילה ועדכון הסטטוס ב-DB
+  async function handleConvertMaintenanceToTicket(item: any) {
+    try {
+      await createTicketInDB({
+        name: item.customer_name,
+        phone: item.phone,
+        city: item.city,
+        address: item.address,
+        priority: 'normal',
+        description: `[תחזוקה חצי שנתית] ${item.service_needed}`,
+        ticketType: 'maintenance'
+      });
+
+      const { error: updError } = await supabase
+        .from('maintenance_schedules')
+        .update({ is_scheduled: true })
+        .eq('id', item.id);
+      if (updError) throw updError;
+
+      loadAllData();
+    } catch (err: any) {
+      alert('שגיאה בתזמון תחזוקה: ' + err.message);
+    }
+  }
+
+  async function handleShiftToggle() {
+    try {
+      if (!activeShift) {
+        await supabase.from('employee_shifts').insert([{ user_id: DEMO_TECH_ID }]);
+      } else {
+        await supabase
+          .from('employee_shifts')
+          .update({ clock_out: new Date().toISOString() })
+          .eq('id', activeShift.id);
+      }
+      loadAllData();
+    } catch (err: any) {
+      alert('שגיאה בעדכון משמרת: ' + err.message);
+    }
+  }
+
+  async function handleCompleteTicket(ticketId: number) {
+    try {
+      const selection = ticketSelections[ticketId] || { itemId: inventory[0]?.inventory_items?.id, qty: 1 };
+
+      const { error: partError } = await supabase
+        .from('ticket_parts_used')
+        .insert([{
+          ticket_id: ticketId,
+          item_id: selection.itemId,
+          quantity_used: selection.qty,
+          unit_price_charged: 0
+        }]);
+      if (partError) throw partError;
+
+      const { error: statusError } = await supabase
+        .from('service_tickets')
+        .update({ status: 'completed' })
+        .eq('id', ticketId);
+      if (statusError) throw statusError;
+
+      alert('הקריאה נסגרה והמלאי ברכב עודכן אוטומטית!');
+      loadAllData();
+    } catch (err: any) {
+      alert('שגיאה בסגירת קריאה: ' + err.message);
+    }
+  }
+
+  async function handleRestockItem(itemId: string, currentQty: number, addAmount: number = 5) {
+    try {
+      const { error } = await supabase
+        .from('technician_inventory')
+        .update({ quantity: currentQty + addAmount })
+        .eq('technician_id', DEMO_TECH_ID)
+        .eq('item_id', itemId);
+
+      if (error) throw error;
+      loadAllData();
+    } catch (err: any) {
+      alert('שגיאה בהעמסת מלאי: ' + err.message);
+    }
+  }
+
+  // חישוב מדדי KPI
+  const openTicketsCount = tickets.filter(t => t.status !== 'completed').length;
+  const urgentTicketsCount = tickets.filter(t => t.status !== 'completed' && t.priority === 'urgent').length;
+  const lowStockCount = inventory.filter(i => i.quantity <= 3).length;
+  const pendingMaintenanceRevenue = maintenanceList
+    .filter(m => !m.is_scheduled)
+    .reduce((acc, m) => acc + (m.estimated_revenue || 0), 0);
+
+  const filteredTickets = tickets.filter((ticket) => {
+    const matchesStatus =
+      statusFilter === 'all' ? true :
+      statusFilter === 'open' ? ticket.status !== 'completed' :
+      ticket.status === 'completed';
+
+    const q = searchQuery.toLowerCase().trim();
+    const matchesQuery =
+      !q ||
+      (ticket.customers?.name || '').toLowerCase().includes(q) ||
+      (ticket.sites?.city || '').toLowerCase().includes(q) ||
+      (ticket.description || '').toLowerCase().includes(q) ||
+      String(ticket.id).includes(q);
+
+    return matchesStatus && matchesQuery;
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-sans">
+      <div className="max-w-6xl mx-auto">
+        {/* כותרת וניווט */}
+        <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-gray-800 pb-5">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-cyan-400">NEXUS FLOW - ניהול שירות ברי מים</h1>
+            <p className="text-gray-400 text-xs md:text-sm mt-1">מערכת CRM, תפעול שטח, מלאי נייד ותחזוקה מונעת</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 bg-gray-800 p-1.5 rounded-xl border border-gray-700">
+            <button
+              onClick={() => setActiveTab('dispatcher')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
+                activeTab === 'dispatcher' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              מוקד קריאות
+            </button>
+            <button
+              onClick={() => setActiveTab('technician')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
+                activeTab === 'technician' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
             >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              אפליקציית טכנאי
+            </button>
+            <button
+              onClick={() => setActiveTab('maintenance')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'maintenance' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              <span>תחזוקה מונעת</span>
+              {maintenanceList.filter(m => !m.is_scheduled).length > 0 && (
+                <span className="bg-amber-500 text-gray-900 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  {maintenanceList.filter(m => !m.is_scheduled).length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
+                activeTab === 'inventory' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              מלאי נייד
+            </button>
+            <button
+              onClick={() => setActiveTab('customers')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
+                activeTab === 'customers' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              לקוחות
+            </button>
+            <button
+              onClick={() => setActiveTab('shifts')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
+                activeTab === 'shifts' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              משמרות
+            </button>
+            <button
+              onClick={loadAllData}
+              title="רענן נתונים בזמן אמת"
+              className="px-2.5 py-2 rounded-lg text-xs text-cyan-400 hover:bg-gray-700 transition cursor-pointer"
+            >
+              ↻
+            </button>
+          </div>
+        </header>
+
+        {/* כרטיסי מדדים (KPI) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-gray-800/80 border border-gray-700 rounded-xl p-4">
+            <div className="text-xs text-gray-400">קריאות פתוחות לטיפול</div>
+            <div className="text-2xl font-bold text-white mt-1">{openTicketsCount}</div>
+          </div>
+          <div className="bg-gray-800/80 border border-gray-700 rounded-xl p-4">
+            <div className="text-xs text-gray-400">קריאות דחופות (Urgent)</div>
+            <div className={`text-2xl font-bold mt-1 ${urgentTicketsCount > 0 ? 'text-red-400' : 'text-gray-300'}`}>
+              {urgentTicketsCount}
+            </div>
+          </div>
+          <div className="bg-gray-800/80 border border-gray-700 rounded-xl p-4">
+            <div className="text-xs text-gray-400">התראות מלאי נמוך ברכב</div>
+            <div className={`text-2xl font-bold mt-1 ${lowStockCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+              {lowStockCount}
+            </div>
+          </div>
+          <div className="bg-gray-800/80 border border-gray-700 rounded-xl p-4">
+            <div className="text-xs text-gray-400">הכנסה צפויה מהחלפת סננים</div>
+            <div className="text-2xl font-bold text-emerald-400 mt-1">₪{pendingMaintenanceRevenue}</div>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        {/* לשונית 1: דשבורד מוקדנים */}
+        {activeTab === 'dispatcher' && (
+          <div>
+            <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3 mb-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="חיפוש לפי לקוח, עיר או תקלה..."
+                  className="bg-gray-800 border border-gray-700 rounded-lg px-3.5 py-2 text-sm text-white focus:border-cyan-400 outline-none w-full sm:w-64"
+                />
+                <div className="flex bg-gray-800 p-1 rounded-lg border border-gray-700 text-xs">
+                  <button
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-2.5 py-1 rounded cursor-pointer ${statusFilter === 'all' ? 'bg-gray-700 text-white' : 'text-gray-400'}`}
+                  >
+                    הכל ({tickets.length})
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('open')}
+                    className={`px-2.5 py-1 rounded cursor-pointer ${statusFilter === 'open' ? 'bg-gray-700 text-white' : 'text-gray-400'}`}
+                  >
+                    פתוחות ({openTicketsCount})
+                  </button>
+                  <button
+                    onClick={() => setStatusFilter('completed')}
+                    className={`px-2.5 py-1 rounded cursor-pointer ${statusFilter === 'completed' ? 'bg-gray-700 text-white' : 'text-gray-400'}`}
+                  >
+                    סגורות ({tickets.length - openTicketsCount})
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsModalOpen(true)}
+                className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-lg font-medium transition shadow-lg cursor-pointer text-sm"
+              >
+                + פתח קריאה חדשה
+              </button>
+            </div>
+
+            <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+              {loading ? (
+                <div className="p-8 text-center text-gray-400">טוען נתונים...</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-700 text-gray-400 text-sm bg-gray-700/30">
+                        <th className="p-4"># מזהה</th>
+                        <th className="p-4">לקוח</th>
+                        <th className="p-4">כתובת</th>
+                        <th className="p-4">תיאור ופירוט חלקים</th>
+                        <th className="p-4">עדיפות</th>
+                        <th className="p-4">סטטוס</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700 text-sm">
+                      {filteredTickets.map((ticket) => (
+                        <tr key={ticket.id} className="hover:bg-gray-700/30 transition">
+                          <td className="p-4 font-mono text-cyan-400">#{ticket.id}</td>
+                          <td className="p-4">
+                            <div className="font-medium text-white">{ticket.customers?.name || 'לא ידוע'}</div>
+                            <div className="text-xs text-gray-400 font-mono">{ticket.customers?.phone}</div>
+                          </td>
+                          <td className="p-4 text-gray-300">{ticket.sites?.city} - {ticket.sites?.address}</td>
+                          <td className="p-4">
+                            <div className="text-gray-300">{ticket.description}</div>
+                            {ticket.ticket_parts_used && ticket.ticket_parts_used.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {ticket.ticket_parts_used.map((p: any, i: number) => (
+                                  <span key={i} className="text-[11px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-2 py-0.5 rounded">
+                                    הוחלף: {p.inventory_items?.name} (x{p.quantity_used})
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
+                              ticket.priority === 'urgent' ? 'bg-red-900/50 text-red-300 border border-red-700' :
+                              ticket.priority === 'high' ? 'bg-orange-900/50 text-orange-300 border border-orange-700' :
+                              'bg-blue-900/50 text-blue-300 border border-blue-700'
+                            }`}>
+                              {ticket.priority}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${
+                              ticket.status === 'completed' ? 'bg-gray-700 text-gray-300 border border-gray-600' :
+                              'bg-emerald-900/50 text-emerald-300 border border-emerald-700'
+                            }`}>
+                              {ticket.status === 'completed' ? 'נסגר' : 'מתוזמן'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredTickets.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-gray-400">
+                            לא נמצאו קריאות תואמות לחיפוש.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* לשונית 2: מסך טכנאי שטח */}
+        {activeTab === 'technician' && (
+          <div className="space-y-6">
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+              <div>
+                <h2 className="text-lg font-bold text-white">שלום, יוסי הטכנאי</h2>
+                <p className="text-sm text-gray-400 mt-1">
+                  סטטוס משמרת:{' '}
+                  {activeShift ? (
+                    <span className="text-emerald-400 font-semibold">
+                      במשמרת פעילה (החלה ב-{new Date(activeShift.clock_in).toLocaleTimeString('he-IL')})
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">מחוץ למשמרת</span>
+                  )}
+                </p>
+              </div>
+              <button
+                onClick={handleShiftToggle}
+                className={`px-6 py-3 rounded-xl font-bold transition cursor-pointer ${
+                  activeShift
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                {activeShift ? 'יציאה ממשמרת (חישוב שעות)' : 'כניסה למשמרת'}
+              </button>
+            </div>
+
+            <h3 className="text-lg font-semibold text-gray-200">קריאות פתוחות לביצוע בשטח</h3>
+            <div className="grid md:grid-cols-2 gap-4">
+              {tickets.filter(t => t.status !== 'completed').map((ticket) => {
+                const currentSelection = ticketSelections[ticket.id] || { itemId: inventory[0]?.inventory_items?.id, qty: 1 };
+
+                return (
+                  <div key={ticket.id} className="bg-gray-800 border border-gray-700 rounded-xl p-5 flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-mono text-cyan-400 font-bold">קריאה #{ticket.id}</span>
+                        <span className="text-xs bg-gray-700 px-2.5 py-1 rounded">{ticket.priority}</span>
+                      </div>
+                      <h4 className="text-lg font-bold text-white">{ticket.customers?.name}</h4>
+                      <p className="text-sm text-gray-300 mt-1">{ticket.sites?.city}, {ticket.sites?.address}</p>
+                      <p className="text-xs text-cyan-400 mt-1">טלפון: {ticket.customers?.phone || '050-0000000'}</p>
+                      <p className="text-sm text-gray-400 mt-2 bg-gray-900/60 p-3 rounded-lg">{ticket.description}</p>
+                    </div>
+
+                    <div className="border-t border-gray-700 pt-4 space-y-3">
+                      <label className="block text-xs text-gray-400">חלק שנצרך מהרכב בטיפול זה:</label>
+                      <div className="flex gap-2">
+                        <select
+                          value={currentSelection.itemId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTicketSelections(prev => ({
+                              ...prev,
+                              [ticket.id]: { ...currentSelection, itemId: val }
+                            }));
+                          }}
+                          className="flex-1 bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white"
+                        >
+                          {inventory.map((inv: any) => (
+                            <option key={inv.inventory_items.id} value={inv.inventory_items.id}>
+                              {inv.inventory_items.name} (במלאי: {inv.quantity})
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10}
+                          value={currentSelection.qty}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setTicketSelections(prev => ({
+                              ...prev,
+                              [ticket.id]: { ...currentSelection, qty: val }
+                            }));
+                          }}
+                          className="w-16 bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-center text-white"
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleCompleteTicket(ticket.id)}
+                        className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-lg font-semibold transition cursor-pointer"
+                      >
+                        סגור קריאה ועדכן מלאי רכב
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {tickets.filter(t => t.status !== 'completed').length === 0 && (
+                <div className="col-span-2 bg-gray-800 border border-gray-700 rounded-xl p-8 text-center text-gray-400">
+                  כל הקריאות להיום טופלו!
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* לשונית 3: מנוע תחזוקה מונעת (החלפת סננים תקופתית מתוך Supabase) */}
+        {activeTab === 'maintenance' && (
+          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+            <div className="p-5 bg-gradient-to-l from-cyan-950/60 to-gray-800 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-white">מנוע תחזוקה מונעת והכנסות חוזרות</h2>
+                <p className="text-xs text-gray-400 mt-0.5">לקוחות שחלפו 6 חודשים ממועד החלפת הסננים האחרונה</p>
+              </div>
+              <div className="bg-emerald-950/80 border border-emerald-700/60 px-4 py-2 rounded-lg text-sm">
+                <span className="text-gray-300">פוטנציאל גבייה מיידי: </span>
+                <span className="font-bold text-emerald-400">₪{pendingMaintenanceRevenue}</span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                    <th className="p-4">שם הלקוח</th>
+                    <th className="p-4">כתובת אתר</th>
+                    <th className="p-4">טיפול נדרש</th>
+                    <th className="p-4">טיפול אחרון</th>
+                    <th className="p-4">שווי עסקה</th>
+                    <th className="p-4">פעולה מהירה</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700 text-sm">
+                  {maintenanceList.map((item) => (
+                    <tr key={item.id} className="hover:bg-gray-700/30">
+                      <td className="p-4">
+                        <div className="font-bold text-white">{item.customer_name}</div>
+                        <div className="text-xs text-gray-400 font-mono">{item.phone}</div>
+                      </td>
+                      <td className="p-4 text-gray-300">{item.city} - {item.address}</td>
+                      <td className="p-4 text-cyan-300">{item.service_needed}</td>
+                      <td className="p-4 font-mono text-gray-400">{item.last_service_date}</td>
+                      <td className="p-4 font-bold text-emerald-400">₪{item.estimated_revenue}</td>
+                      <td className="p-4">
+                        {item.is_scheduled ? (
+                          <span className="text-xs bg-emerald-900/50 text-emerald-300 border border-emerald-700 px-3 py-1.5 rounded-lg font-medium">
+                            ✓ נפתחה קריאה ליוסי
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleConvertMaintenanceToTicket(item)}
+                            className="bg-cyan-600 hover:bg-cyan-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer"
+                          >
+                            + תזמן קריאה לטכנאי
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* לשונית 4: מלאי נייד ברכבים */}
+        {activeTab === 'inventory' && (
+          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
+              <span className="font-semibold text-gray-200">מלאי נוכחי ברכב של יוסי הטכנאי ({inventory.length} פריטים)</span>
+              <span className="text-xs text-cyan-400">מתעדכן אוטומטית בכל סגירת קריאה</span>
+            </div>
+            <table className="w-full text-right border-collapse">
+              <thead>
+                <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                  <th className="p-4">מק"ט</th>
+                  <th className="p-4">שם הפריט</th>
+                  <th className="p-4">קטגוריה</th>
+                  <th className="p-4">יתרה ברכב</th>
+                  <th className="p-4">פעולת מחסן</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700 text-sm">
+                {inventory.map((item: any, idx: number) => (
+                  <tr key={idx} className="hover:bg-gray-700/30">
+                    <td className="p-4 font-mono text-gray-400">{item.inventory_items?.sku}</td>
+                    <td className="p-4 font-medium text-white">{item.inventory_items?.name}</td>
+                    <td className="p-4 text-gray-300">{item.inventory_items?.category}</td>
+                    <td className="p-4">
+                      <span className={`px-3 py-1 rounded-full font-bold ${
+                        item.quantity <= 3 ? 'bg-red-900/50 text-red-300 border border-red-700' : 'bg-emerald-900/50 text-emerald-300'
+                      }`}>
+                        {item.quantity} יח'
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <button
+                        onClick={() => handleRestockItem(item.inventory_items.id, item.quantity, 5)}
+                        className="bg-gray-700 hover:bg-gray-600 text-cyan-300 px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer"
+                      >
+                        + העמס 5 יח' לרכב
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* לשונית 5: לקוחות ואתרים (CRM) */}
+        {activeTab === 'customers' && (
+          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
+              <span className="font-semibold text-gray-200">מאגר לקוחות ואתרי התקנה ({customers.length})</span>
+              <span className="text-xs text-gray-400">תצוגת 360 כולל היסטוריית קריאות</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                    <th className="p-4">שם הלקוח</th>
+                    <th className="p-4">טלפון</th>
+                    <th className="p-4">אתרי התקנה (כתובות)</th>
+                    <th className="p-4">סה"כ קריאות</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-700 text-sm">
+                  {customers.map((cust: any) => (
+                    <tr key={cust.id} className="hover:bg-gray-700/30">
+                      <td className="p-4 font-bold text-white">{cust.name}</td>
+                      <td className="p-4 font-mono text-gray-300">{cust.phone}</td>
+                      <td className="p-4 text-gray-300">
+                        {cust.sites && cust.sites.length > 0 ? (
+                          <div className="space-y-1">
+                            {cust.sites.map((s: any) => (
+                              <div key={s.id} className="text-xs bg-gray-900/70 px-2.5 py-1 rounded inline-block ml-2">
+                                {s.city} - {s.address}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          'ללא אתר רשום'
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <span className="bg-cyan-900/40 text-cyan-300 border border-cyan-800 px-2.5 py-1 rounded-md text-xs font-semibold">
+                          {cust.service_tickets?.length || 0} קריאות
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* לשונית 6: דוח משמרות ושעות עבודה */}
+        {activeTab === 'shifts' && (
+          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
+              <span className="font-semibold text-gray-200">יומן נוכחות ומשמרות - יוסי הטכנאי</span>
+              <span className="text-xs text-gray-400">10 משמרות אחרונות</span>
+            </div>
+            <table className="w-full text-right border-collapse">
+              <thead>
+                <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                  <th className="p-4">תאריך</th>
+                  <th className="p-4">כניסה למשמרת</th>
+                  <th className="p-4">יציאה ממשמרת</th>
+                  <th className="p-4">משך משמרת</th>
+                  <th className="p-4">סטטוס</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700 text-sm">
+                {shifts.map((shift: any) => {
+                  const start = new Date(shift.clock_in);
+                  const end = shift.clock_out ? new Date(shift.clock_out) : null;
+                  const diffMinutes = end ? Math.round((end.getTime() - start.getTime()) / 60000) : null;
+
+                  return (
+                    <tr key={shift.id} className="hover:bg-gray-700/30">
+                      <td className="p-4 text-gray-300">{start.toLocaleDateString('he-IL')}</td>
+                      <td className="p-4 font-mono text-white">{start.toLocaleTimeString('he-IL')}</td>
+                      <td className="p-4 font-mono text-white">
+                        {end ? end.toLocaleTimeString('he-IL') : '—'}
+                      </td>
+                      <td className="p-4 text-cyan-400 font-medium">
+                        {diffMinutes !== null ? `${diffMinutes} דקות` : 'פעיל כעת'}
+                      </td>
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
+                          !end ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700' : 'bg-gray-700 text-gray-300'
+                        }`}>
+                          {!end ? 'במשמרת' : 'הושלמה'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {shifts.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-gray-400">
+                      אין עדיין רישומי משמרות. היכנס ללשונית "אפליקציית טכנאי" ולחץ על "כניסה למשמרת".
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* מודאל פתיחת קריאה חדשה */}
+        {isModalOpen && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+            <div className="bg-gray-800 border border-gray-700 rounded-xl max-w-md w-full p-6 shadow-2xl">
+              <h2 className="text-xl font-bold text-cyan-400 mb-4">פתיחת קריאת שירות חדשה</h2>
+              <form onSubmit={handleCreateTicket} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">שם הלקוח</label>
+                    <input
+                      type="text" required value={customerName} onChange={(e) => setCustomerName(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                      placeholder="משרדי הייטק בע״מ"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">טלפון</label>
+                    <input
+                      type="text" value={phone} onChange={(e) => setPhone(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                      placeholder="052-0000000"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">עיר</label>
+                    <input
+                      type="text" required value={city} onChange={(e) => setCity(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                      placeholder="פתח תקווה"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">כתובת</label>
+                    <input
+                      type="text" required value={address} onChange={(e) => setAddress(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                      placeholder="הסיבים 18"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1">עדיפות</label>
+                  <select
+                    value={priority} onChange={(e) => setPriority(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                  >
+                    <option value="normal">רגילה (Normal)</option>
+                    <option value="high">גבוהה (High)</option>
+                    <option value="urgent">דחופה (Urgent)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1">תיאור התקלה</label>
+                  <textarea
+                    value={description} onChange={(e) => setDescription(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
+                    placeholder="החלפת סנן פחם + בלון גז..."
+                  />
+                </div>
+                <div className="flex justify-end gap-3 mt-6">
+                  <button
+                    type="button" onClick={() => setIsModalOpen(false)}
+                    className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition cursor-pointer"
+                  >
+                    ביטול
+                  </button>
+                  <button
+                    type="submit"
+                    className="bg-cyan-600 hover:bg-cyan-500 text-white px-5 py-2 rounded-lg font-medium transition cursor-pointer"
+                  >
+                    שמור קריאה
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
