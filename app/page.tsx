@@ -292,7 +292,7 @@ export default function Home() {
             </button>
             <button
               onClick={() => setActiveTab('routes')}
-              className={px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer }
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'routes' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
             >
               יומן ומסלולים
             </button>
