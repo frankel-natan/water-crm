@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import ServiceSummaryModal from '@/components/ServiceSummaryModal';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -28,17 +29,17 @@ export default function Home() {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('normal');
 
-  // סטייט נפרד לכל קריאה בשטח עבור בחירת חלק וכמות
-  const [ticketSelections, setTicketSelections] = useState<{ [key: number]: { itemId: string; qty: number } }>({});
+  // סטייט למודאל סגירת קריאה + חתימת לקוח ותעודת שירות
+  const [signingTicket, setSigningTicket] = useState<any | null>(null);
 
   async function loadAllData() {
     setLoading(true);
     try {
-      // 1. קריאות שירות כולל חלקים שנצרכו
       const { data: ticketsData } = await supabase
         .from('service_tickets')
         .select(`
           id, ticket_type, status, priority, description, scheduled_at,
+          customer_signature, technician_notes, completed_at,
           customers (name, phone),
           sites (city, address),
           ticket_parts_used (
@@ -49,7 +50,6 @@ export default function Home() {
         .order('created_at', { ascending: false });
       setTickets(ticketsData || []);
 
-      // 2. מלאי רכב טכנאי
       const { data: invData } = await supabase
         .from('technician_inventory')
         .select(`
@@ -59,27 +59,12 @@ export default function Home() {
         .eq('technician_id', DEMO_TECH_ID);
       setInventory(invData || []);
 
-      if (ticketsData && invData && invData.length > 0) {
-        const firstInv: any = invData[0];
-        const defaultItemId = Array.isArray(firstInv.inventory_items)
-          ? firstInv.inventory_items[0]?.id
-          : firstInv.inventory_items?.id;
-
-        const initialSelections: any = {};
-        ticketsData.forEach((t: any) => {
-          initialSelections[t.id] = { itemId: defaultItemId, qty: 1 };
-        });
-        setTicketSelections(initialSelections);
-      }
-
-      // 3. תחזוקה מונעת מתוך בסיס הנתונים
       const { data: maintData } = await supabase
         .from('maintenance_schedules')
         .select('*')
         .order('id', { ascending: true });
       setMaintenanceList(maintData || []);
 
-      // 4. לקוחות ואתרים
       const { data: custData } = await supabase
         .from('customers')
         .select(`
@@ -90,7 +75,6 @@ export default function Home() {
         .order('created_at', { ascending: false });
       setCustomers(custData || []);
 
-      // 5. משמרות ונוכחות
       const { data: shiftsData } = await supabase
         .from('employee_shifts')
         .select('*')
@@ -173,7 +157,6 @@ export default function Home() {
     }
   }
 
-  // הפיכת התראת תחזוקה לקריאה פעילה ועדכון הסטטוס ב-DB
   async function handleConvertMaintenanceToTicket(item: any) {
     try {
       await createTicketInDB({
@@ -214,31 +197,37 @@ export default function Home() {
     }
   }
 
-  async function handleCompleteTicket(ticketId: number) {
-    try {
-      const selection = ticketSelections[ticketId] || { itemId: inventory[0]?.inventory_items?.id, qty: 1 };
-
+  async function handleCompleteWithSignature(data: {
+    ticketId: string;
+    itemId: string;
+    qty: number;
+    notes: string;
+    signature: string;
+  }) {
+    if (data.itemId) {
       const { error: partError } = await supabase
         .from('ticket_parts_used')
         .insert([{
-          ticket_id: ticketId,
-          item_id: selection.itemId,
-          quantity_used: selection.qty,
+          ticket_id: data.ticketId,
+          item_id: data.itemId,
+          quantity_used: data.qty,
           unit_price_charged: 0
         }]);
       if (partError) throw partError;
-
-      const { error: statusError } = await supabase
-        .from('service_tickets')
-        .update({ status: 'completed' })
-        .eq('id', ticketId);
-      if (statusError) throw statusError;
-
-      alert('הקריאה נסגרה והמלאי ברכב עודכן אוטומטית!');
-      loadAllData();
-    } catch (err: any) {
-      alert('שגיאה בסגירת קריאה: ' + err.message);
     }
+
+    const { error: statusError } = await supabase
+      .from('service_tickets')
+      .update({
+        status: 'completed',
+        customer_signature: data.signature,
+        technician_notes: data.notes,
+        completed_at: new Date().toISOString()
+      })
+      .eq('id', data.ticketId);
+    if (statusError) throw statusError;
+
+    await loadAllData();
   }
 
   async function handleRestockItem(itemId: string, currentQty: number, addAmount: number = 5) {
@@ -256,7 +245,6 @@ export default function Home() {
     }
   }
 
-  // חישוב מדדי KPI
   const openTicketsCount = tickets.filter(t => t.status !== 'completed').length;
   const urgentTicketsCount = tickets.filter(t => t.status !== 'completed' && t.priority === 'urgent').length;
   const lowStockCount = inventory.filter(i => i.quantity <= 3).length;
@@ -284,7 +272,6 @@ export default function Home() {
   return (
     <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-sans">
       <div className="max-w-6xl mx-auto">
-        {/* כותרת וניווט */}
         <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-gray-800 pb-5">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-cyan-400">NEXUS FLOW - ניהול שירות ברי מים</h1>
@@ -355,7 +342,6 @@ export default function Home() {
           </div>
         </header>
 
-        {/* כרטיסי מדדים (KPI) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <div className="bg-gray-800/80 border border-gray-700 rounded-xl p-4">
             <div className="text-xs text-gray-400">קריאות פתוחות לטיפול</div>
@@ -379,7 +365,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* לשונית 1: דשבורד מוקדנים */}
         {activeTab === 'dispatcher' && (
           <div>
             <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3 mb-4">
@@ -434,7 +419,7 @@ export default function Home() {
                         <th className="p-4">כתובת</th>
                         <th className="p-4">תיאור ופירוט חלקים</th>
                         <th className="p-4">עדיפות</th>
-                        <th className="p-4">סטטוס</th>
+                        <th className="p-4">סטטוס ואישור</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-700 text-sm">
@@ -448,6 +433,9 @@ export default function Home() {
                           <td className="p-4 text-gray-300">{ticket.sites?.city} - {ticket.sites?.address}</td>
                           <td className="p-4">
                             <div className="text-gray-300">{ticket.description}</div>
+                            {ticket.technician_notes && (
+                              <div className="text-xs text-emerald-300 mt-1">סיכום טכנאי: {ticket.technician_notes}</div>
+                            )}
                             {ticket.ticket_parts_used && ticket.ticket_parts_used.length > 0 && (
                               <div className="mt-1 flex flex-wrap gap-1">
                                 {ticket.ticket_parts_used.map((p: any, i: number) => (
@@ -468,12 +456,17 @@ export default function Home() {
                             </span>
                           </td>
                           <td className="p-4">
-                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${
-                              ticket.status === 'completed' ? 'bg-gray-700 text-gray-300 border border-gray-600' :
-                              'bg-emerald-900/50 text-emerald-300 border border-emerald-700'
-                            }`}>
-                              {ticket.status === 'completed' ? 'נסגר' : 'מתוזמן'}
-                            </span>
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className={`px-2.5 py-1 rounded-md text-xs font-bold ${
+                                ticket.status === 'completed' ? 'bg-gray-700 text-gray-300 border border-gray-600' :
+                                'bg-emerald-900/50 text-emerald-300 border border-emerald-700'
+                              }`}>
+                                {ticket.status === 'completed' ? 'נסגר' : 'מתוזמן'}
+                              </span>
+                              {ticket.customer_signature && (
+                                <span className="text-[11px] text-emerald-400 font-medium">✓ חתום דיגיטלית</span>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -492,7 +485,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* לשונית 2: מסך טכנאי שטח */}
         {activeTab === 'technician' && (
           <div className="space-y-6">
             <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -523,67 +515,36 @@ export default function Home() {
 
             <h3 className="text-lg font-semibold text-gray-200">קריאות פתוחות לביצוע בשטח</h3>
             <div className="grid md:grid-cols-2 gap-4">
-              {tickets.filter(t => t.status !== 'completed').map((ticket) => {
-                const currentSelection = ticketSelections[ticket.id] || { itemId: inventory[0]?.inventory_items?.id, qty: 1 };
-
-                return (
-                  <div key={ticket.id} className="bg-gray-800 border border-gray-700 rounded-xl p-5 flex flex-col justify-between space-y-4">
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-mono text-cyan-400 font-bold">קריאה #{ticket.id}</span>
-                        <span className="text-xs bg-gray-700 px-2.5 py-1 rounded">{ticket.priority}</span>
-                      </div>
-                      <h4 className="text-lg font-bold text-white">{ticket.customers?.name}</h4>
-                      <p className="text-sm text-gray-300 mt-1">{ticket.sites?.city}, {ticket.sites?.address}</p>
-                      <p className="text-xs text-cyan-400 mt-1">טלפון: {ticket.customers?.phone || '050-0000000'}</p>
-                      <p className="text-sm text-gray-400 mt-2 bg-gray-900/60 p-3 rounded-lg">{ticket.description}</p>
+              {tickets.filter(t => t.status !== 'completed').map((ticket) => (
+                <div key={ticket.id} className="bg-gray-800 border border-gray-700 rounded-xl p-5 flex flex-col justify-between space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-mono text-cyan-400 font-bold">קריאה #{ticket.id}</span>
+                      <span className="text-xs bg-gray-700 px-2.5 py-1 rounded">{ticket.priority}</span>
                     </div>
-
-                    <div className="border-t border-gray-700 pt-4 space-y-3">
-                      <label className="block text-xs text-gray-400">חלק שנצרך מהרכב בטיפול זה:</label>
-                      <div className="flex gap-2">
-                        <select
-                          value={currentSelection.itemId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setTicketSelections(prev => ({
-                              ...prev,
-                              [ticket.id]: { ...currentSelection, itemId: val }
-                            }));
-                          }}
-                          className="flex-1 bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-white"
-                        >
-                          {inventory.map((inv: any) => (
-                            <option key={inv.inventory_items.id} value={inv.inventory_items.id}>
-                              {inv.inventory_items.name} (במלאי: {inv.quantity})
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={currentSelection.qty}
-                          onChange={(e) => {
-                            const val = Number(e.target.value);
-                            setTicketSelections(prev => ({
-                              ...prev,
-                              [ticket.id]: { ...currentSelection, qty: val }
-                            }));
-                          }}
-                          className="w-16 bg-gray-900 border border-gray-700 rounded-lg p-2 text-sm text-center text-white"
-                        />
-                      </div>
-                      <button
-                        onClick={() => handleCompleteTicket(ticket.id)}
-                        className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 rounded-lg font-semibold transition cursor-pointer"
-                      >
-                        סגור קריאה ועדכן מלאי רכב
-                      </button>
-                    </div>
+                    <h4 className="text-lg font-bold text-white">{ticket.customers?.name}</h4>
+                    <p className="text-sm text-gray-300 mt-1">{ticket.sites?.city}, {ticket.sites?.address}</p>
+                    <p className="text-xs text-cyan-400 mt-1">טלפון: {ticket.customers?.phone || '050-0000000'}</p>
+                    <p className="text-sm text-gray-400 mt-2 bg-gray-900/60 p-3 rounded-lg">{ticket.description}</p>
                   </div>
-                );
-              })}
+
+                  <div className="border-t border-gray-700 pt-4">
+                    <button
+                      onClick={() => setSigningTicket({
+                        ...ticket,
+                        customers: {
+                          full_name: ticket.customers?.name,
+                          phone: ticket.customers?.phone,
+                          address: `${ticket.sites?.city || ''} ${ticket.sites?.address || ''}`.trim()
+                        }
+                      })}
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-bold transition cursor-pointer shadow-lg"
+                    >
+                      סגור קריאה, החתם לקוח והפק תעודה ✍️
+                    </button>
+                  </div>
+                </div>
+              ))}
               {tickets.filter(t => t.status !== 'completed').length === 0 && (
                 <div className="col-span-2 bg-gray-800 border border-gray-700 rounded-xl p-8 text-center text-gray-400">
                   כל הקריאות להיום טופלו!
@@ -593,7 +554,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* לשונית 3: מנוע תחזוקה מונעת (החלפת סננים תקופתית מתוך Supabase) */}
         {activeTab === 'maintenance' && (
           <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
             <div className="p-5 bg-gradient-to-l from-cyan-950/60 to-gray-800 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -652,7 +612,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* לשונית 4: מלאי נייד ברכבים */}
         {activeTab === 'inventory' && (
           <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
             <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
@@ -662,7 +621,7 @@ export default function Home() {
             <table className="w-full text-right border-collapse">
               <thead>
                 <tr className="border-b border-gray-700 text-gray-400 text-sm">
-                  <th className="p-4">מק"ט</th>
+                  <th className="p-4">מק&quot;ט</th>
                   <th className="p-4">שם הפריט</th>
                   <th className="p-4">קטגוריה</th>
                   <th className="p-4">יתרה ברכב</th>
@@ -670,26 +629,61 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700 text-sm">
-                {inventory.map((item: any, idx: number) => (
-                  <tr key={idx} className="hover:bg-gray-700/30">
-                    <td className="p-4 font-mono text-gray-400">{item.inventory_items?.sku}</td>
-                    <td className="p-4 font-medium text-white">{item.inventory_items?.name}</td>
-                    <td className="p-4 text-gray-300">{item.inventory_items?.category}</td>
-                    <td className="p-4">
-                      <span className={`px-3 py-1 rounded-full font-bold ${
-                        item.quantity <= 3 ? 'bg-red-900/50 text-red-300 border border-red-700' : 'bg-emerald-900/50 text-emerald-300'
-                      }`}>
-                        {item.quantity} יח'
-                      </span>
+                {inventory.map((item: any, idx: number) => {
+                  const invItem = Array.isArray(item.inventory_items) ? item.inventory_items[0] : item.inventory_items;
+                  return (
+                    <tr key={idx} className="hover:bg-gray-700/30">
+                      <td className="p-4 font-mono text-gray-400">{invItem?.sku}</td>
+                      <td className="p-4 font-medium text-white">{invItem?.name}</td>
+                      <td className="p-4 text-gray-300">{invItem?.category}</td>
+                      <td className="p-4">
+                        <span className={`px-3 py-1 rounded-full font-bold ${
+                          item.quantity <= 3 ? 'bg-red-900/50 text-red-300 border border-red-700' : 'bg-emerald-900/50 text-emerald-300'
+                        }`}>
+                          {item.quantity} יח&apos;
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <button
+                          onClick={() => handleRestockItem(invItem?.id, item.quantity, 5)}
+                          className="bg-gray-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer"
+                        >
+                          + העמס 5 יח&apos; מהמחסן
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {activeTab === 'customers' && (
+          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
+            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
+              <span className="font-semibold text-gray-200">מאגר לקוחות ואתרים ({customers.length})</span>
+            </div>
+            <table className="w-full text-right border-collapse">
+              <thead>
+                <tr className="border-b border-gray-700 text-gray-400 text-sm">
+                  <th className="p-4">שם הלקוח</th>
+                  <th className="p-4">טלפון</th>
+                  <th className="p-4">סוג לקוח</th>
+                  <th className="p-4">כתובת האתר</th>
+                  <th className="p-4">סה&quot;כ קריאות</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700 text-sm">
+                {customers.map((cust) => (
+                  <tr key={cust.id} className="hover:bg-gray-700/30">
+                    <td className="p-4 font-bold text-white">{cust.name}</td>
+                    <td className="p-4 font-mono text-cyan-400">{cust.phone}</td>
+                    <td className="p-4 text-gray-300">{cust.customer_type}</td>
+                    <td className="p-4 text-gray-300">
+                      {cust.sites && cust.sites.length > 0 ? `${cust.sites[0].city}, ${cust.sites[0].address}` : '—'}
                     </td>
-                    <td className="p-4">
-                      <button
-                        onClick={() => handleRestockItem(item.inventory_items.id, item.quantity, 5)}
-                        className="bg-gray-700 hover:bg-gray-600 text-cyan-300 px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer"
-                      >
-                        + העמס 5 יח' לרכב
-                      </button>
-                    </td>
+                    <td className="p-4 font-mono text-gray-200">{cust.service_tickets?.length || 0}</td>
                   </tr>
                 ))}
               </tbody>
@@ -697,189 +691,139 @@ export default function Home() {
           </div>
         )}
 
-        {/* לשונית 5: לקוחות ואתרים (CRM) */}
-        {activeTab === 'customers' && (
-          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
-            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
-              <span className="font-semibold text-gray-200">מאגר לקוחות ואתרי התקנה ({customers.length})</span>
-              <span className="text-xs text-gray-400">תצוגת 360 כולל היסטוריית קריאות</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-right border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-700 text-gray-400 text-sm">
-                    <th className="p-4">שם הלקוח</th>
-                    <th className="p-4">טלפון</th>
-                    <th className="p-4">אתרי התקנה (כתובות)</th>
-                    <th className="p-4">סה"כ קריאות</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700 text-sm">
-                  {customers.map((cust: any) => (
-                    <tr key={cust.id} className="hover:bg-gray-700/30">
-                      <td className="p-4 font-bold text-white">{cust.name}</td>
-                      <td className="p-4 font-mono text-gray-300">{cust.phone}</td>
-                      <td className="p-4 text-gray-300">
-                        {cust.sites && cust.sites.length > 0 ? (
-                          <div className="space-y-1">
-                            {cust.sites.map((s: any) => (
-                              <div key={s.id} className="text-xs bg-gray-900/70 px-2.5 py-1 rounded inline-block ml-2">
-                                {s.city} - {s.address}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          'ללא אתר רשום'
-                        )}
-                      </td>
-                      <td className="p-4">
-                        <span className="bg-cyan-900/40 text-cyan-300 border border-cyan-800 px-2.5 py-1 rounded-md text-xs font-semibold">
-                          {cust.service_tickets?.length || 0} קריאות
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* לשונית 6: דוח משמרות ושעות עבודה */}
         {activeTab === 'shifts' && (
           <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
-            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
-              <span className="font-semibold text-gray-200">יומן נוכחות ומשמרות - יוסי הטכנאי</span>
-              <span className="text-xs text-gray-400">10 משמרות אחרונות</span>
+            <div className="p-4 bg-gray-700/50 border-b border-gray-700">
+              <span className="font-semibold text-gray-200">דוח נוכחות ומשמרות - יוסי הטכנאי</span>
             </div>
             <table className="w-full text-right border-collapse">
               <thead>
                 <tr className="border-b border-gray-700 text-gray-400 text-sm">
-                  <th className="p-4">תאריך</th>
                   <th className="p-4">כניסה למשמרת</th>
                   <th className="p-4">יציאה ממשמרת</th>
-                  <th className="p-4">משך משמרת</th>
                   <th className="p-4">סטטוס</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700 text-sm">
-                {shifts.map((shift: any) => {
-                  const start = new Date(shift.clock_in);
-                  const end = shift.clock_out ? new Date(shift.clock_out) : null;
-                  const diffMinutes = end ? Math.round((end.getTime() - start.getTime()) / 60000) : null;
-
-                  return (
-                    <tr key={shift.id} className="hover:bg-gray-700/30">
-                      <td className="p-4 text-gray-300">{start.toLocaleDateString('he-IL')}</td>
-                      <td className="p-4 font-mono text-white">{start.toLocaleTimeString('he-IL')}</td>
-                      <td className="p-4 font-mono text-white">
-                        {end ? end.toLocaleTimeString('he-IL') : '—'}
-                      </td>
-                      <td className="p-4 text-cyan-400 font-medium">
-                        {diffMinutes !== null ? `${diffMinutes} דקות` : 'פעיל כעת'}
-                      </td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-md text-xs font-semibold ${
-                          !end ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700' : 'bg-gray-700 text-gray-300'
-                        }`}>
-                          {!end ? 'במשמרת' : 'הושלמה'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {shifts.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="p-8 text-center text-gray-400">
-                      אין עדיין רישומי משמרות. היכנס ללשונית "אפליקציית טכנאי" ולחץ על "כניסה למשמרת".
+                {shifts.map((shift) => (
+                  <tr key={shift.id} className="hover:bg-gray-700/30">
+                    <td className="p-4 font-mono text-gray-200">{new Date(shift.clock_in).toLocaleString('he-IL')}</td>
+                    <td className="p-4 font-mono text-gray-300">
+                      {shift.clock_out ? new Date(shift.clock_out).toLocaleString('he-IL') : 'פעיל כעת'}
+                    </td>
+                    <td className="p-4">
+                      <span className={`px-2.5 py-1 rounded text-xs font-semibold ${
+                        shift.clock_out ? 'bg-gray-700 text-gray-300' : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700'
+                      }`}>
+                        {shift.clock_out ? 'הושלם' : 'במשמרת'}
+                      </span>
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>
         )}
+      </div>
 
-        {/* מודאל פתיחת קריאה חדשה */}
-        {isModalOpen && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-800 border border-gray-700 rounded-xl max-w-md w-full p-6 shadow-2xl">
-              <h2 className="text-xl font-bold text-cyan-400 mb-4">פתיחת קריאת שירות חדשה</h2>
-              <form onSubmit={handleCreateTicket} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">שם הלקוח</label>
-                    <input
-                      type="text" required value={customerName} onChange={(e) => setCustomerName(e.target.value)}
-                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                      placeholder="משרדי הייטק בע״מ"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">טלפון</label>
-                    <input
-                      type="text" value={phone} onChange={(e) => setPhone(e.target.value)}
-                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                      placeholder="052-0000000"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">עיר</label>
-                    <input
-                      type="text" required value={city} onChange={(e) => setCity(e.target.value)}
-                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                      placeholder="פתח תקווה"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-300 mb-1">כתובת</label>
-                    <input
-                      type="text" required value={address} onChange={(e) => setAddress(e.target.value)}
-                      className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                      placeholder="הסיבים 18"
-                    />
-                  </div>
-                </div>
+      {/* מודאל פתיחת קריאה חדשה */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+          <div className="bg-gray-800 border border-gray-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-cyan-400 mb-4">פתיחת קריאת שירות חדשה</h2>
+            <form onSubmit={handleCreateTicket} className="space-y-4">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">שם הלקוח / חברה *</label>
+                <input
+                  required
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-300 mb-1">עדיפות</label>
-                  <select
-                    value={priority} onChange={(e) => setPriority(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                  >
-                    <option value="normal">רגילה (Normal)</option>
-                    <option value="high">גבוהה (High)</option>
-                    <option value="urgent">דחופה (Urgent)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-300 mb-1">תיאור התקלה</label>
-                  <textarea
-                    value={description} onChange={(e) => setDescription(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white focus:border-cyan-400 outline-none"
-                    placeholder="החלפת סנן פחם + בלון גז..."
+                  <label className="block text-xs text-gray-400 mb-1">טלפון</label>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="050-0000000"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
                   />
                 </div>
-                <div className="flex justify-end gap-3 mt-6">
-                  <button
-                    type="button" onClick={() => setIsModalOpen(false)}
-                    className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition cursor-pointer"
-                  >
-                    ביטול
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-cyan-600 hover:bg-cyan-500 text-white px-5 py-2 rounded-lg font-medium transition cursor-pointer"
-                  >
-                    שמור קריאה
-                  </button>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">עיר *</label>
+                  <input
+                    required
+                    type="text"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
+                  />
                 </div>
-              </form>
-            </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">כתובת מלאה *</label>
+                <input
+                  required
+                  type="text"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">דחיפות</label>
+                <select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
+                >
+                  <option value="normal">רגילה (Normal)</option>
+                  <option value="high">גבוהה (High)</option>
+                  <option value="urgent">דחופה (Urgent)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">תיאור התקלה</label>
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2.5 text-white text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-gray-600 text-gray-300 text-sm cursor-pointer"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-sm cursor-pointer"
+                >
+                  צור קריאה
+                </button>
+              </div>
+            </form>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* מודאל חתימת לקוח והפקת תעודת שירות */}
+      {signingTicket && (
+        <ServiceSummaryModal
+          ticket={signingTicket}
+          inventory={inventory}
+          onClose={() => setSigningTicket(null)}
+          onConfirmComplete={handleCompleteWithSignature}
+        />
+      )}
     </main>
   );
 }
