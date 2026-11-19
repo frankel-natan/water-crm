@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import ServiceSummaryModal from '@/components/ServiceSummaryModal';
 import ReceiptViewModal from '@/components/ReceiptViewModal';
+import RoutePlanner from '@/components/RoutePlanner';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dispatcher' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts'>('dispatcher');
+  const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts'>('dispatcher');
   const [tickets, setTickets] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -290,6 +291,12 @@ export default function Home() {
               מוקד קריאות
             </button>
             <button
+              onClick={() => setActiveTab('routes')}
+              className={px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer }
+            >
+              יומן ומסלולים
+            </button>
+            <button
               onClick={() => setActiveTab('technician')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
                 activeTab === 'technician' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
@@ -490,6 +497,10 @@ export default function Home() {
               )}
             </div>
           </div>
+        )}
+
+                {activeTab === 'routes' && (
+          <RoutePlanner tickets={tickets} onRefresh={loadAllData} />
         )}
 
         {activeTab === 'technician' && (
