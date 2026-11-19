@@ -335,6 +335,12 @@ export default function Home() {
               לקוחות
             </button>
             <button
+              onClick={() => setActiveTab('billing')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'billing' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
+            >
+              כספים וגבייה
+            </button>
+            <button
               onClick={() => setActiveTab('shifts')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
                 activeTab === 'shifts' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
