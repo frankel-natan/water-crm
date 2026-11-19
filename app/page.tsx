@@ -6,6 +6,7 @@ import ServiceSummaryModal from '@/components/ServiceSummaryModal';
 import ReceiptViewModal from '@/components/ReceiptViewModal';
 import RoutePlanner from '@/components/RoutePlanner';
 import BillingManager from '@/components/BillingManager';
+import CustomersManager from '@/components/CustomersManager';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -42,7 +43,7 @@ export default function Home() {
       const { data: ticketsData } = await supabase
         .from('service_tickets')
         .select(`
-          id, ticket_type, status, priority, description, scheduled_at,
+          id, customer_id, ticket_type, status, priority, description, scheduled_at,
           customer_signature, technician_notes, completed_at, payment_status, total_amount, payment_method, invoice_number, paid_at,
           customers (name, phone),
           sites (city, address),
@@ -685,35 +686,12 @@ export default function Home() {
         )}
 
         {activeTab === 'customers' && (
-          <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
-            <div className="p-4 bg-gray-700/50 border-b border-gray-700 flex justify-between items-center">
-              <span className="font-semibold text-gray-200">מאגר לקוחות ואתרים ({customers.length})</span>
-            </div>
-            <table className="w-full text-right border-collapse">
-              <thead>
-                <tr className="border-b border-gray-700 text-gray-400 text-sm">
-                  <th className="p-4">שם הלקוח</th>
-                  <th className="p-4">טלפון</th>
-                  <th className="p-4">סוג לקוח</th>
-                  <th className="p-4">כתובת האתר</th>
-                  <th className="p-4">סה&quot;כ קריאות</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700 text-sm">
-                {customers.map((cust) => (
-                  <tr key={cust.id} className="hover:bg-gray-700/30">
-                    <td className="p-4 font-bold text-white">{cust.name}</td>
-                    <td className="p-4 font-mono text-cyan-400">{cust.phone}</td>
-                    <td className="p-4 text-gray-300">{cust.customer_type}</td>
-                    <td className="p-4 text-gray-300">
-                      {cust.sites && cust.sites.length > 0 ? `${cust.sites[0].city}, ${cust.sites[0].address}` : '—'}
-                    </td>
-                    <td className="p-4 font-mono text-gray-200">{cust.service_tickets?.length || 0}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <CustomersManager
+            customers={customers}
+            tickets={tickets}
+            onRefresh={loadAllData}
+            onViewReceipt={(ticket) => setViewingReceiptTicket(ticket)}
+          />
         )}
 
         {activeTab === 'billing' && (
