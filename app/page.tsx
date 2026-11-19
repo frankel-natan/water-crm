@@ -5,11 +5,12 @@ import { supabase } from '@/lib/supabase';
 import ServiceSummaryModal from '@/components/ServiceSummaryModal';
 import ReceiptViewModal from '@/components/ReceiptViewModal';
 import RoutePlanner from '@/components/RoutePlanner';
+import BillingManager from '@/components/BillingManager';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts'>('dispatcher');
+  const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts' | 'billing'>('dispatcher');
   const [tickets, setTickets] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -42,7 +43,7 @@ export default function Home() {
         .from('service_tickets')
         .select(`
           id, ticket_type, status, priority, description, scheduled_at,
-          customer_signature, technician_notes, completed_at,
+          customer_signature, technician_notes, completed_at, payment_status, total_amount, payment_method, invoice_number, paid_at,
           customers (name, phone),
           sites (city, address),
           ticket_parts_used (
@@ -707,6 +708,10 @@ export default function Home() {
               </tbody>
             </table>
           </div>
+        )}
+
+        {activeTab === 'billing' && (
+          <BillingManager tickets={tickets} onRefresh={loadAllData} />
         )}
 
         {activeTab === 'shifts' && (
