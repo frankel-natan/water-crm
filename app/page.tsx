@@ -7,11 +7,12 @@ import ReceiptViewModal from '@/components/ReceiptViewModal';
 import RoutePlanner from '@/components/RoutePlanner';
 import BillingManager from '@/components/BillingManager';
 import CustomersManager from '@/components/CustomersManager';
+import WarehouseManager from '@/components/WarehouseManager';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts' | 'billing'>('dispatcher');
+  const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts' | 'billing' | 'warehouse'>('dispatcher');
   const [tickets, setTickets] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -59,7 +60,7 @@ export default function Home() {
         .from('technician_inventory')
         .select(`
           quantity,
-          inventory_items (id, sku, name, category, unit_price)
+          inventory_items (id, sku, name, category, unit_price, warehouse_qty, min_stock_alert, last_po_number)
         `)
         .eq('technician_id', DEMO_TECH_ID);
       setInventory(invData || []);
@@ -326,6 +327,12 @@ export default function Home() {
               }`}
             >
               מלאי נייד
+            </button>
+            <button
+              onClick={() => setActiveTab('warehouse')}
+              className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'warehouse' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
+            >
+              מחסן ראשי
             </button>
             <button
               onClick={() => setActiveTab('customers')}
