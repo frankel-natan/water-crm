@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import ServiceSummaryModal from '@/components/ServiceSummaryModal';
+import ReceiptViewModal from '@/components/ReceiptViewModal';
 
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -31,6 +32,7 @@ export default function Home() {
 
   // סטייט למודאל סגירת קריאה + חתימת לקוח ותעודת שירות
   const [signingTicket, setSigningTicket] = useState<any | null>(null);
+  const [viewingReceiptTicket, setViewingReceiptTicket] = useState<any | null>(null);
 
   async function loadAllData() {
     setLoading(true);
@@ -44,7 +46,7 @@ export default function Home() {
           sites (city, address),
           ticket_parts_used (
             quantity_used,
-            inventory_items (name)
+            inventory_items (name, unit_price)
           )
         `)
         .order('created_at', { ascending: false });
@@ -463,8 +465,13 @@ export default function Home() {
                               }`}>
                                 {ticket.status === 'completed' ? 'נסגר' : 'מתוזמן'}
                               </span>
-                              {ticket.customer_signature && (
-                                <span className="text-[11px] text-emerald-400 font-medium">✓ חתום דיגיטלית</span>
+                              {ticket.status === 'completed' && (
+                                <button
+                                  onClick={() => setViewingReceiptTicket(ticket)}
+                                  className="mt-1 text-[11px] bg-cyan-950 hover:bg-cyan-800 text-cyan-300 border border-cyan-700 px-2 py-1 rounded transition cursor-pointer"
+                                >
+                                  📄 צפה בתעודה {ticket.customer_signature ? 'וחתימה' : ''}
+                                </button>
                               )}
                             </div>
                           </td>
@@ -822,6 +829,12 @@ export default function Home() {
           inventory={inventory}
           onClose={() => setSigningTicket(null)}
           onConfirmComplete={handleCompleteWithSignature}
+        />
+      )}
+          {viewingReceiptTicket && (
+        <ReceiptViewModal
+          ticket={viewingReceiptTicket}
+          onClose={() => setViewingReceiptTicket(null)}
         />
       )}
     </main>
