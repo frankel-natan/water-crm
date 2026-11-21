@@ -1,5 +1,7 @@
 'use client';
 
+import RoleSwitcher from '@/components/RoleSwitcher';
+import { UserRole, canAccessTab, getDefaultTabForRole } from '@/lib/permissions';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import ServiceSummaryModal from '@/components/ServiceSummaryModal';
@@ -275,10 +277,30 @@ export default function Home() {
     return matchesStatus && matchesQuery;
   });
 
+    const [userRole, setUserRole] = useState<UserRole>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('nexus_flow_role');
+      if (saved === 'manager' || saved === 'technician') return saved;
+    }
+    return 'manager';
+  });
+
+  const handleRoleChange = (nextRole: UserRole) => {
+    setUserRole(nextRole);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nexus_flow_role', nextRole);
+    }
+    if (typeof activeTab !== 'undefined' && !canAccessTab(nextRole, String(activeTab))) {
+      setActiveTab(getDefaultTabForRole(nextRole) as any);
+    }
+  };
+
   return (
     <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-sans">
       <div className="max-w-6xl mx-auto">
         <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-gray-800 pb-5">
+        <div className='mb-3 flex justify-end'><RoleSwitcher role={userRole} onChangeRole={handleRoleChange} /></div>
+
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-cyan-400">NEXUS FLOW - ניהול שירות ברי מים</h1>
             <p className="text-gray-400 text-xs md:text-sm mt-1">מערכת CRM, תפעול שטח, מלאי נייד ותחזוקה מונעת</p>
