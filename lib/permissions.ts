@@ -5,7 +5,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   technician: "טכנאי שטח",
 };
 
-export const TECHNICIAN_TABS = ["tech", "schedule", "inventory", "maintenance"];
+export const TECHNICIAN_TABS = ["technician", "routes", "inventory", "maintenance"];
 
 export function canAccessTab(role: UserRole, tab: string): boolean {
   if (role === "manager") return true;
@@ -13,5 +13,5 @@ export function canAccessTab(role: UserRole, tab: string): boolean {
 }
 
 export function getDefaultTabForRole(role: UserRole): string {
-  return role === "manager" ? "dispatcher" : "tech";
+  return role === "manager" ? "dispatcher" : "technician";
 }

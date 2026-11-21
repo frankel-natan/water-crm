@@ -285,12 +285,12 @@ export default function Home() {
     return 'manager';
   });
 
-  const handleRoleChange = (nextRole: UserRole) => {
+    const handleRoleChange = (nextRole: UserRole) => {
     setUserRole(nextRole);
     if (typeof window !== 'undefined') {
       localStorage.setItem('nexus_flow_role', nextRole);
     }
-    if (typeof activeTab !== 'undefined' && !canAccessTab(nextRole, String(activeTab))) {
+    if (!canAccessTab(nextRole, String(activeTab))) {
       setActiveTab(getDefaultTabForRole(nextRole) as any);
     }
   };
@@ -298,23 +298,22 @@ export default function Home() {
   return (
     <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-sans">
       <div className="max-w-6xl mx-auto">
+        <div className="flex justify-end mb-2"><RoleSwitcher role={userRole} onChangeRole={handleRoleChange} /></div>
         <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-gray-800 pb-5">
-        <div className='mb-3 flex justify-end'><RoleSwitcher role={userRole} onChangeRole={handleRoleChange} /></div>
-
-          <div>
+<div>
             <h1 className="text-2xl md:text-3xl font-bold text-cyan-400">NEXUS FLOW - ניהול שירות ברי מים</h1>
             <p className="text-gray-400 text-xs md:text-sm mt-1">מערכת CRM, תפעול שטח, מלאי נייד ותחזוקה מונעת</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 bg-gray-800 p-1.5 rounded-xl border border-gray-700">
-            <button
+            {canAccessTab(userRole, 'dispatcher') && (<button
               onClick={() => setActiveTab('dispatcher')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
                 activeTab === 'dispatcher' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
               }`}
             >
               מוקד קריאות
-            </button>
+            </button>)}
             <button
               onClick={() => setActiveTab('routes')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'routes' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
@@ -350,34 +349,34 @@ export default function Home() {
             >
               מלאי נייד
             </button>
-            <button
+            {canAccessTab(userRole, 'warehouse') && (<button
               onClick={() => setActiveTab('warehouse')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'warehouse' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
             >
               מחסן ראשי
-            </button>
-            <button
+            </button>)}
+            {canAccessTab(userRole, 'customers') && (<button
               onClick={() => setActiveTab('customers')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
                 activeTab === 'customers' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
               }`}
             >
               לקוחות
-            </button>
-            <button
+            </button>)}
+            {canAccessTab(userRole, 'billing') && (<button
               onClick={() => setActiveTab('billing')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${activeTab === 'billing' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'}`}
             >
               כספים וגבייה
-            </button>
-            <button
+            </button>)}
+            {canAccessTab(userRole, 'shifts') && (<button
               onClick={() => setActiveTab('shifts')}
               className={`px-3 py-2 rounded-lg text-xs md:text-sm font-medium transition cursor-pointer ${
                 activeTab === 'shifts' ? 'bg-cyan-600 text-white shadow' : 'text-gray-300 hover:text-white'
               }`}
             >
               משמרות
-            </button>
+            </button>)}
             <button
               onClick={loadAllData}
               title="רענן נתונים בזמן אמת"
@@ -411,7 +410,7 @@ export default function Home() {
           </div>
         </div>
 
-        {activeTab === 'dispatcher' && (
+        {activeTab === 'dispatcher' && canAccessTab(userRole, 'dispatcher') && (
           <div>
             <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3 mb-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -714,7 +713,7 @@ export default function Home() {
           </div>
         )}
 
-        {activeTab === 'customers' && (
+        {activeTab === 'customers' && canAccessTab(userRole, 'customers') && (
           <CustomersManager
             customers={customers}
             tickets={tickets}
@@ -723,11 +722,11 @@ export default function Home() {
           />
         )}
 
-        {activeTab === 'billing' && (
+        {activeTab === 'billing' && canAccessTab(userRole, 'billing') && (
           <BillingManager tickets={tickets} onRefresh={loadAllData} />
         )}
 
-        {activeTab === 'shifts' && (
+        {activeTab === 'shifts' && canAccessTab(userRole, 'shifts') && (
           <div className="bg-gray-800 rounded-xl shadow-lg overflow-hidden border border-gray-700">
             <div className="p-4 bg-gray-700/50 border-b border-gray-700">
               <span className="font-semibold text-gray-200">דוח נוכחות ומשמרות - יוסי הטכנאי</span>
