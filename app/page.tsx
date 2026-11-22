@@ -1,5 +1,7 @@
 'use client';
 
+import AuthGate from '@/components/AuthGate';
+import type { Session } from '@supabase/supabase-js';
 import RoleSwitcher from '@/components/RoleSwitcher';
 import { UserRole, canAccessTab, getDefaultTabForRole } from '@/lib/permissions';
 import { useEffect, useState } from 'react';
@@ -14,6 +16,33 @@ import WarehouseManager from '@/components/WarehouseManager';
 const DEMO_TECH_ID = '11111111-1111-1111-1111-111111111111';
 
 export default function Home() {
+  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const [authChecking, setAuthChecking] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setAuthSession(data.session ?? null);
+      setAuthChecking(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      setAuthSession(session ?? null);
+      setAuthChecking(false);
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
   const [activeTab, setActiveTab] = useState<'dispatcher' | 'routes' | 'technician' | 'inventory' | 'maintenance' | 'customers' | 'shifts' | 'billing' | 'warehouse'>('dispatcher');
   const [tickets, setTickets] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
@@ -295,10 +324,21 @@ export default function Home() {
     }
   };
 
+  if (authChecking) {
+    return (
+      <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center p-4 font-sans">
+        <div className="text-sm text-gray-400">בודק הרשאות גישה...</div>
+      </main>
+    );
+  }
+
+  if (!authSession) {
+    return <AuthGate />;
+  }
   return (
     <main dir="rtl" className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8 font-sans">
       <div className="max-w-6xl mx-auto">
-        <div className="flex justify-end mb-2"><RoleSwitcher role={userRole} onChangeRole={handleRoleChange} /></div>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2"><div className="flex items-center gap-2 text-xs text-gray-400"><span>מחובר כ: <strong className="text-gray-200">{authSession?.user?.email}</strong></span><button type="button" onClick={handleLogout} className="px-2.5 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-200 transition cursor-pointer">התנתק</button></div><RoleSwitcher role={userRole} onChangeRole={handleRoleChange} /></div>
         <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 mb-6 border-b border-gray-800 pb-5">
 <div>
             <h1 className="text-2xl md:text-3xl font-bold text-cyan-400">NEXUS FLOW - ניהול שירות ברי מים</h1>
